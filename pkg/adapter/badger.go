@@ -287,8 +287,8 @@ type Options struct {
 }
 
 // NewBadgerStore takes a file path and returns a connected Raft backend.
-func NewBadgerStore(path string) (*BadgerStore, error) {
-	return New(Options{Path: path})
+func NewBadgerStore(path string, gcThreshold int64) (*BadgerStore, error) {
+	return New(Options{Path: path, GCThreshold: gcThreshold})
 }
 
 // New uses the supplied options to open the Badger db and prepare it for

@@ -28,4 +28,4 @@ ENTRYPOINT ["/root/docker-entrypoint.sh"]
 
 EXPOSE 4002
 
-CMD ["/root/casmesh", "-raft-address", "0.0.0.0:4002", "/casmesh/data/data"]
+CMD ["/root/casmesh","-gc-threshold","209715200","-raft-address", "0.0.0.0:4002", "/casmesh/data/data"]

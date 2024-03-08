@@ -150,6 +150,7 @@ type Store struct {
 
 	ShutdownOnRemove   bool
 	SnapshotThreshold  uint64
+	GcThreshold        int64
 	SnapshotInterval   time.Duration
 	LeaderLeaseTimeout time.Duration
 	HeartbeatTimeout   time.Duration
@@ -252,7 +253,7 @@ func (s *Store) Open(enableBootstrap bool) error {
 	s.logger.Printf("%d pre-existing snapshots present", len(snaps))
 	s.snapsExistOnOpen = len(snaps) > 0
 	// TODO !important. stale read? restart after the node crashed
-	s.enforcersState, err = adapter.NewBadgerStore(filepath.Join(s.raftDir, stateDBPath))
+	s.enforcersState, err = adapter.NewBadgerStore(filepath.Join(s.raftDir, stateDBPath), s.GcThreshold)
 	if err != nil {
 		return fmt.Errorf("new state store: %s", err)
 	}
