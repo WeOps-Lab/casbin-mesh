@@ -20,12 +20,13 @@ package store
 import (
 	"context"
 	"encoding/json"
-	_const "github.com/casbin/casbin-mesh/pkg/const"
+	"fmt"
+	"log"
 	"time"
 
-	"github.com/casbin/casbin/v2"
-
+	_const "github.com/casbin/casbin-mesh/pkg/const"
 	"github.com/casbin/casbin-mesh/proto/command"
+	"github.com/casbin/casbin/v2"
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/raft"
 )
@@ -87,15 +88,21 @@ func (s *Store) SetModelFromString(ctx context.Context, ns string, text string) 
 
 // Enforce executes enforcement.
 func (s *Store) Enforce(ctx context.Context, ns string, level command.EnforcePayload_Level, freshness int64, params ...interface{}) (bool, error) {
+	log.Printf("[ENFORCE] Starting enforcement: namespace=%s, level=%v, freshness=%d, params=%v", ns, level, freshness, params)
+
 	if level == command.EnforcePayload_QUERY_REQUEST_LEVEL_STRONG {
+		log.Printf("[ENFORCE] Processing STRONG level enforcement for namespace=%s", ns)
+
 		var B [][]byte
-		for _, p := range params {
+		for i, p := range params {
 			b, err := json.Marshal(p)
 			if err != nil {
-				return false, err
+				log.Printf("[ENFORCE] ERROR: Failed to marshal param[%d]=%v for namespace=%s: %v", i, p, ns, err)
+				return false, fmt.Errorf("failed to marshal param[%d]: %w", i, err)
 			}
 			B = append(B, b)
 		}
+		log.Printf("[ENFORCE] Successfully marshaled %d parameters for namespace=%s", len(B), ns)
 
 		payload, err := proto.Marshal(&command.EnforcePayload{
 			B:         B,
@@ -103,7 +110,8 @@ func (s *Store) Enforce(ctx context.Context, ns string, level command.EnforcePay
 			Freshness: freshness,
 		})
 		if err != nil {
-			return false, err
+			log.Printf("[ENFORCE] ERROR: Failed to marshal EnforcePayload for namespace=%s: %v", ns, err)
+			return false, fmt.Errorf("failed to marshal EnforcePayload: %w", err)
 		}
 
 		cmd, err := proto.Marshal(&command.Command{
@@ -113,33 +121,69 @@ func (s *Store) Enforce(ctx context.Context, ns string, level command.EnforcePay
 			Metadata:  nil,
 		})
 		if err != nil {
-			return false, err
+			log.Printf("[ENFORCE] ERROR: Failed to marshal Command for namespace=%s: %v", ns, err)
+			return false, fmt.Errorf("failed to marshal Command: %w", err)
 		}
+
+		log.Printf("[ENFORCE] Applying raft command for namespace=%s, timeout=%v", ns, s.ApplyTimeout)
 		f := s.raft.Apply(cmd, s.ApplyTimeout)
 		if e := f.(raft.Future); e.Error() != nil {
 			if e.Error() == raft.ErrNotLeader {
+				log.Printf("[ENFORCE] ERROR: Not leader when applying raft command for namespace=%s", ns)
 				return false, ErrNotLeader
 			}
-			return false, e.Error()
+			log.Printf("[ENFORCE] ERROR: Raft apply failed for namespace=%s: %v", ns, e.Error())
+			return false, fmt.Errorf("raft apply failed: %w", e.Error())
 		}
+
 		r := f.Response().(*FSMEnforceResponse)
+		if r.error != nil {
+			log.Printf("[ENFORCE] ERROR: FSM response error for namespace=%s: %v", ns, r.error)
+		} else {
+			log.Printf("[ENFORCE] SUCCESS: STRONG level enforcement completed for namespace=%s, result=%t", ns, r.ok)
+		}
 		return r.ok, r.error
 	}
+
 	if level == command.EnforcePayload_QUERY_REQUEST_LEVEL_WEAK && s.raft.State() != raft.Leader {
+		log.Printf("[ENFORCE] ERROR: WEAK level requires leader but current state=%v for namespace=%s", s.raft.State(), ns)
 		return false, ErrNotLeader
 	}
+
 	if level == command.EnforcePayload_QUERY_REQUEST_LEVEL_NONE &&
 		freshness > 0 &&
 		s.raft.State() != raft.Leader &&
 		time.Since(s.raft.LastContact()).Nanoseconds() > freshness {
+		lastContact := time.Since(s.raft.LastContact()).Nanoseconds()
+		log.Printf("[ENFORCE] ERROR: Stale read detected for namespace=%s, freshness=%d, lastContact=%d", ns, freshness, lastContact)
 		return false, ErrStaleRead
 	}
+
+	log.Printf("[ENFORCE] Loading enforcer for namespace=%s", ns)
 	if e, ok := s.enforcers.Load(ns); ok {
 		enforcer := e.(*casbin.DistributedEnforcer)
+		if enforcer == nil {
+			log.Printf("[ENFORCE] ERROR: Enforcer is nil for namespace=%s", ns)
+			return false, fmt.Errorf("enforcer is nil for namespace: %s", ns)
+		}
+
+		log.Printf("[ENFORCE] Executing casbin enforcement for namespace=%s with params=%v", ns, params)
 		r, err := enforcer.Enforce(params...)
-		return r, err
+		if err != nil {
+			log.Printf("[ENFORCE] ERROR: Casbin enforcement failed for namespace=%s with params=%v: %v", ns, params, err)
+			return false, fmt.Errorf("casbin enforcement failed: %w", err)
+		}
+
+		log.Printf("[ENFORCE] SUCCESS: Enforcement completed for namespace=%s, result=%t", ns, r)
+		return r, nil
 	} else {
-		return false, NamespaceNotExist
+		log.Printf("[ENFORCE] ERROR: Namespace not found: %s. Available enforcers: ", ns)
+		// 记录可用的命名空间以便调试
+		s.enforcers.Range(func(key, value interface{}) bool {
+			log.Printf("[ENFORCE] Available namespace: %v", key)
+			return true
+		})
+		return false, fmt.Errorf("namespace not exist: %s", ns)
 	}
 }
 
