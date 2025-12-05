@@ -249,10 +249,14 @@ func (s *Store) Open(enableBootstrap bool) error {
 	}
 	s.logger.Printf("%d pre-existing snapshots present", len(snaps))
 	s.snapsExistOnOpen = len(snaps) > 0
-	// TODO !important. stale read? restart after the node crashed
-	s.enforcersState, err = adapter.NewBadgerStore(filepath.Join(s.raftDir, stateDBPath), s.GcThreshold)
+	// Use optimized BadgerStore for better performance with large policy batches
+	s.enforcersState, err = adapter.NewOptimizedBadgerStore(filepath.Join(s.raftDir, stateDBPath), s.GcThreshold)
 	if err != nil {
-		return fmt.Errorf("new state store: %s", err)
+		s.logger.Printf("Failed to create optimized BadgerStore, falling back to default: %v", err)
+		s.enforcersState, err = adapter.NewBadgerStore(filepath.Join(s.raftDir, stateDBPath), s.GcThreshold)
+		if err != nil {
+			return fmt.Errorf("new state store: %s", err)
+		}
 	}
 	// Create the log store and stable store.
 	s.boltStore, err = rlog.NewLog(filepath.Join(s.raftDir, raftDBPath))

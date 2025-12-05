@@ -43,7 +43,7 @@ func testGetPolicy(t *testing.T, e casbin.IEnforcer, wanted [][]string) {
 func (suite *AdapterTestSuite) SetupTest() {
 	t := suite.T()
 
-	db, err := NewBadgerStore(testDB)
+	db, err := NewBadgerStore(testDB, 1024*1024*1024) // 1GB GC threshold for tests
 	if err != nil {
 		t.Fatalf("error opening db: %s\n", err.Error())
 	}

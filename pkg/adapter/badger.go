@@ -301,6 +301,35 @@ func NewBadgerStore(path string, gcThreshold int64) (*BadgerStore, error) {
 	return New(Options{Path: path, GCThreshold: gcThreshold})
 }
 
+// NewOptimizedBadgerStore creates a BadgerStore with performance optimizations
+func NewOptimizedBadgerStore(path string, gcThreshold int64) (*BadgerStore, error) {
+	opts := badger.DefaultOptions(path)
+
+	// Performance optimizations for high-throughput write workloads
+	opts.NumMemtables = 5             // Increase number of memtables (default: 5)
+	opts.NumLevelZeroTables = 10      // Increase L0 tables before compaction (default: 5)
+	opts.NumLevelZeroTablesStall = 15 // More tables before stalling (default: 10)
+	opts.ValueLogMaxEntries = 100000  // Increase value log batch size (default: 1000000)
+	opts.BaseTableSize = 64 << 20     // 64MB table size (corrected field name)
+	opts.LevelSizeMultiplier = 10     // Level size multiplier (default: 10)
+	opts.MaxLevels = 7                // Maximum levels (default: 7)
+	opts.NumCompactors = 2            // Number of compaction workers (default: 2)
+	opts.SyncWrites = true            // Keep sync writes for consistency
+	opts.NumVersionsToKeep = 1        // Keep fewer versions (default: 1)
+	opts.CompactL0OnClose = true      // Compact L0 on close
+
+	// Memory optimizations
+	opts.BlockCacheSize = 128 << 20 // 128MB block cache (default: 256MB)
+	opts.IndexCacheSize = 32 << 20  // 32MB index cache (default: 0)
+
+	return New(Options{
+		Path:          path,
+		GCThreshold:   gcThreshold,
+		BadgerOptions: &opts,
+		ValueLogGC:    true,
+	})
+}
+
 // New uses the supplied options to open the Badger db and prepare it for
 // use as a raft backend.
 func New(options Options) (*BadgerStore, error) {

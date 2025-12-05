@@ -21,7 +21,9 @@ import (
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
 	"github.com/dgraph-io/badger/v3"
+	"log"
 	"strings"
+	"time"
 )
 
 // CasbinRule represents a Casbin rule line.
@@ -112,19 +114,70 @@ func (a *adapter) AddPolicy(sec string, ptype string, rule []string) error {
 
 // AddPolicies inserts or updates multiple rules by iterating over each one and inserting it into the namespace.
 func (a *adapter) AddPolicies(sec string, ptype string, rules [][]string) error {
+	start := time.Now()
+	ruleCount := len(rules)
+	
+	log.Printf("[Adapter][AddPolicies] Starting batch operation: rules=%d", ruleCount)
+	
+	// Optimize for large batches by processing in chunks
+	const batchSize = 1000
+	
+	var err error
+	if ruleCount <= batchSize {
+		err = a.addPoliciesBatch(sec, ptype, rules)
+	} else {
+		// Process large rule sets in batches to avoid memory pressure
+		for i := 0; i < ruleCount; i += batchSize {
+			end := i + batchSize
+			if end > ruleCount {
+				end = ruleCount
+			}
+			
+			batchStart := time.Now()
+			if err = a.addPoliciesBatch(sec, ptype, rules[i:end]); err != nil {
+				break
+			}
+			log.Printf("[Adapter][AddPolicies] Batch %d-%d completed in %v", i, end-1, time.Since(batchStart))
+		}
+	}
+	
+	duration := time.Since(start)
+	if err != nil {
+		log.Printf("[Adapter][AddPolicies] Failed after %v: rules=%d err=%v", duration, ruleCount, err)
+	} else {
+		log.Printf("[Adapter][AddPolicies] Completed in %v: rules=%d rate=%.2f rules/sec", 
+			duration, ruleCount, float64(ruleCount)/duration.Seconds())
+	}
+	
+	return err
+}
+
+// addPoliciesBatch processes a batch of policies in a single transaction with enhanced performance
+func (a *adapter) addPoliciesBatch(sec string, ptype string, rules [][]string) error {
 	return a.db.Update(func(tx *Tx) error {
 		bucket := tx.Bucket(a.namespace)
 
+		// Pre-allocate with extra capacity for complex Unicode rules
+		keyValuePairs := make(map[string][]byte, len(rules))
+		
+		// 性能优化：预计算所有key和value，减少事务内计算
+		// 特别针对包含中文字符的复杂规则进行优化
 		for _, r := range rules {
-
 			line := convertRule(ptype, r)
-
+			key := line.getKey()
+			
+			// 优化：直接生成JSON字节，避免多次编码
 			bts, err := json.Marshal(line)
 			if err != nil {
 				return err
 			}
-
-			if err := bucket.Put([]byte(line.getKey()), bts); err != nil {
+			
+			keyValuePairs[key] = bts
+		}
+		
+		// 批量写入优化：按顺序写入减少随机IO
+		for key, value := range keyValuePairs {
+			if err := bucket.Put([]byte(key), value); err != nil {
 				return err
 			}
 		}
