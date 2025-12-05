@@ -1,6 +1,6 @@
 module github.com/casbin/casbin-mesh
 
-go 1.15
+go 1.16
 
 require (
 	github.com/BBVA/raft-badger v1.1.0
