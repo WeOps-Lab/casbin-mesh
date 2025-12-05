@@ -190,11 +190,21 @@ func (bucket *Bucket) Exist(key []byte) bool {
 }
 
 func (bucket *Bucket) Put(key []byte, value []byte) error {
-	return bucket.txn.Set(bucket.withPrefix(key), value)
+	err := bucket.txn.Set(bucket.withPrefix(key), value)
+	if err != nil {
+		log.Printf("[Badger][Put] failed: namespace=%s key=%s err=%v", string(bucket.namespace), string(key), err)
+		return err
+	}
+	return nil
 }
 
 func (bucket *Bucket) Delete(key []byte) error {
-	return bucket.txn.Delete(bucket.withPrefix(key))
+	err := bucket.txn.Delete(bucket.withPrefix(key))
+	if err != nil {
+		log.Printf("[Badger][Delete] failed: namespace=%s key=%s err=%v", string(bucket.namespace), string(key), err)
+		return err
+	}
+	return nil
 }
 
 func (b BadgerStore) ForEach(fn func(namespace []byte, bucket *Bucket) error) error {
@@ -233,9 +243,12 @@ func (b BadgerStore) Update(fn func(tx *Tx) error) error {
 	tx := &Tx{conn: b.conn, txn: txn}
 	err := fn(tx)
 	if err != nil {
+		log.Printf("[Badger][Update] transaction function failed: err=%v", err)
 		txn.Discard()
+		return err
 	}
 	if err := txn.Commit(); err != nil {
+		log.Printf("[Badger][Update] commit failed: err=%v", err)
 		return err
 	}
 	return nil
@@ -340,14 +353,24 @@ func New(options Options) (*BadgerStore, error) {
 func (b *BadgerStore) runVlogGC(db *badger.DB, threshold int64) {
 	// Get initial size on start.
 	_, lastVlogSize := db.Size()
+	log.Printf("[Badger][GC] Starting value log GC: threshold=%d initial_size=%d", threshold, lastVlogSize)
 
 	runGC := func() {
 		var err error
+		gcCount := 0
 		for err == nil {
 			// If a GC is successful, immediately run it again.
 			err = db.RunValueLogGC(0.7)
+			if err == nil {
+				gcCount++
+			}
 		}
-		_, lastVlogSize = db.Size()
+		_, newVlogSize := db.Size()
+		if gcCount > 0 {
+			log.Printf("[Badger][GC] Completed %d GC cycles: size %d -> %d (saved %d bytes)",
+				gcCount, lastVlogSize, newVlogSize, lastVlogSize-newVlogSize)
+		}
+		lastVlogSize = newVlogSize
 	}
 
 	for {
@@ -357,8 +380,10 @@ func (b *BadgerStore) runVlogGC(db *badger.DB, threshold int64) {
 			if currentVlogSize < lastVlogSize+threshold {
 				continue
 			}
+			log.Printf("[Badger][GC] Conditional GC triggered: size=%d threshold=%d", currentVlogSize, threshold)
 			runGC()
 		case <-b.mandatoryVlogTicker.C:
+			log.Printf("[Badger][GC] Mandatory GC triggered")
 			runGC()
 		}
 	}

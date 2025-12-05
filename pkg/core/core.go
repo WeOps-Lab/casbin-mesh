@@ -89,6 +89,26 @@ func (s core) LeaderAddr() string {
 	return s.store.LeaderAddr()
 }
 
+// LeaderID returns the node ID of the Raft leader
+func (s core) LeaderID() (string, error) {
+	return s.store.LeaderID()
+}
+
+// ID returns the Raft ID of the store
+func (s core) ID() string {
+	return s.store.ID()
+}
+
+// State returns the current node's Raft state
+func (s core) State() store.ClusterState {
+	return s.store.State()
+}
+
+// Nodes returns the slice of nodes in the cluster
+func (s core) Nodes() ([]*store.Server, error) {
+	return s.store.Nodes()
+}
+
 // LeaderAPIAddr returns the API address of the leader, as known by this node.
 func (s core) LeaderAPIAddr() string {
 	return s.store.LeaderAddr()
@@ -124,6 +144,10 @@ type Core interface {
 	PrintModel(ctx context.Context, namespace string) (string, error)
 	IsLeader(ctx context.Context) bool
 	LeaderAddr() string
+	LeaderID() (string, error)
+	ID() string
+	State() store.ClusterState
+	Nodes() ([]*store.Server, error)
 	Stats(ctx context.Context) (map[string]interface{}, error)
 	CreateNamespace(ctx context.Context, ns string) error
 	SetModelFromString(ctx context.Context, ns string, text string) error

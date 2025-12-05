@@ -20,16 +20,19 @@ import (
 	"github.com/casbin/casbin-mesh/proto/command"
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/raft"
+	"log"
 )
 
 // AddPolicies implements the casbin.Adapter interface.
 func (s *Store) AddPolicies(ctx context.Context, ns string, sec string, pType string, rules [][]string) ([][]string, error) {
+	log.Printf("[Store][AddPolicies] namespace=%s sec=%s ptype=%s rules_count=%d", ns, sec, pType, len(rules))
 	payload, err := proto.Marshal(&command.AddPoliciesPayload{
 		Sec:   sec,
 		PType: pType,
 		Rules: command.NewStringArray(rules),
 	})
 	if err != nil {
+		log.Printf("[Store][AddPolicies] marshal payload failed: ns=%s err=%v", ns, err)
 		return nil, err
 	}
 
@@ -40,17 +43,22 @@ func (s *Store) AddPolicies(ctx context.Context, ns string, sec string, pType st
 		Metadata:  nil,
 	})
 	if err != nil {
+		log.Printf("[Store][AddPolicies] marshal command failed: ns=%s err=%v", ns, err)
 		return nil, err
 	}
 
 	f := s.raft.Apply(cmd, s.ApplyTimeout)
 	if e := f.(raft.Future); e.Error() != nil {
+		log.Printf("[Store][AddPolicies] raft apply failed: ns=%s err=%v", ns, e.Error())
 		if e.Error() == raft.ErrNotLeader {
 			return nil, ErrNotLeader
 		}
 		return nil, e.Error()
 	}
 	r := f.Response().(*FSMResponse)
+	if r.error != nil {
+		log.Printf("[Store][AddPolicies] fsm error: ns=%s err=%v", ns, r.error)
+	}
 	return r.effectedRules, r.error
 }
 

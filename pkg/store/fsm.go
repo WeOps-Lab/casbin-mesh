@@ -139,57 +139,73 @@ func (s *Store) Apply(l *raft.Log) (e interface{}) {
 		}
 		return &FSMEnforceResponse{error: NamespaceNotExist}
 	case command.Type_COMMAND_TYPE_CREATE_NAMESPACE:
+		log.Printf("[FSM][CreateNamespace] namespace=%s", cmd.Namespace)
 		_, ok := s.enforcers.Load(cmd.Namespace)
 		if ok {
+			log.Printf("[FSM][CreateNamespace] namespace already exists: %s", cmd.Namespace)
 			return &FSMResponse{error: NamespaceExisted}
 		}
 		e, err := casbin.NewDistributedEnforcer()
 		if err != nil {
+			log.Printf("[FSM][CreateNamespace] failed to create enforcer: namespace=%s err=%v", cmd.Namespace, err)
 			return &FSMResponse{error: err}
 		}
 
 		s.enforcers.Store(cmd.Namespace, e)
+		log.Printf("[FSM][CreateNamespace] success: namespace=%s", cmd.Namespace)
 		return &FSMResponse{}
 	case command.Type_COMMAND_TYPE_SET_MODEL:
+		log.Printf("[FSM][SetModel] namespace=%s", cmd.Namespace)
 		var p command.SetModelFromString
 		if err = proto.Unmarshal(cmd.Payload, &p); err != nil {
+			log.Printf("[FSM][SetModel] unmarshal failed: namespace=%s err=%v", cmd.Namespace, err)
 			return &FSMResponse{error: UnmarshalFailed}
 		}
 		if e, ok := s.enforcers.Load(cmd.Namespace); ok {
 			enforcer := e.(*casbin.DistributedEnforcer)
 			a, err := adapter.NewAdapter(s.enforcersState, cmd.Namespace, "")
 			if err != nil {
+				log.Printf("[FSM][SetModel] adapter creation failed: namespace=%s err=%v", cmd.Namespace, err)
 				return &FSMResponse{error: err}
 			}
 			model, err := model2.NewModelFromString(p.Text)
 			if err != nil {
+				log.Printf("[FSM][SetModel] model parsing failed: namespace=%s err=%v", cmd.Namespace, err)
 				return &FSMResponse{error: err}
 			}
 			err = enforcer.InitWithModelAndAdapter(model, a)
 			if err != nil {
+				log.Printf("[FSM][SetModel] enforcer init failed: namespace=%s err=%v", cmd.Namespace, err)
 				return &FSMResponse{error: err}
 			}
-			log.Println("set model successfully")
+			log.Printf("[FSM][SetModel] success: namespace=%s", cmd.Namespace)
 		} else {
+			log.Printf("[FSM][SetModel] namespace not exist: %s", cmd.Namespace)
 			return &FSMResponse{error: NamespaceNotExist}
 		}
 		return &FSMResponse{}
 	case command.Type_COMMAND_TYPE_ADD_POLICIES:
+		log.Printf("[FSM][AddPolicies] namespace=%s", cmd.Namespace)
 		var p command.AddPoliciesPayload
 		if err = proto.Unmarshal(cmd.Payload, &p); err != nil {
+			log.Printf("[FSM][AddPolicies] unmarshal failed: namespace=%s err=%v", cmd.Namespace, err)
 			return &FSMResponse{error: NamespaceNotExist}
 		}
 		var effectedRules [][]string
 		if e, ok := s.enforcers.Load(cmd.Namespace); ok {
 			enforcer := e.(*casbin.DistributedEnforcer)
 			if enforcer.GetModel() == nil {
+				log.Printf("[FSM][AddPolicies] model unset: namespace=%s", cmd.Namespace)
 				return &FSMResponse{error: ModelUnsetYet}
 			}
 			effectedRules, err = enforcer.AddPoliciesSelf(persist, p.Sec, p.PType, command.ToStringArray(p.Rules))
 			if err != nil {
+				log.Printf("[FSM][AddPolicies] enforcer add failed: namespace=%s sec=%s ptype=%s err=%v", cmd.Namespace, p.Sec, p.PType, err)
 				return &FSMResponse{error: err}
 			}
+			log.Printf("[FSM][AddPolicies] success: namespace=%s sec=%s ptype=%s affected_count=%d", cmd.Namespace, p.Sec, p.PType, len(effectedRules))
 		} else {
+			log.Printf("[FSM][AddPolicies] namespace not exist: %s", cmd.Namespace)
 			return &FSMResponse{error: NamespaceNotExist}
 		}
 		return &FSMResponse{effectedRules: effectedRules}
@@ -210,8 +226,10 @@ func (s *Store) Apply(l *raft.Log) (e interface{}) {
 		}
 		return &FSMResponse{effected: effected}
 	case command.Type_COMMAND_TYPE_REMOVE_POLICIES:
+		log.Printf("[FSM][RemovePolicies] namespace=%s", cmd.Namespace)
 		var p command.RemovePoliciesPayload
 		if err = proto.Unmarshal(cmd.Payload, &p); err != nil {
+			log.Printf("[FSM][RemovePolicies] unmarshal failed: namespace=%s err=%v", cmd.Namespace, err)
 			return &FSMResponse{error: UnmarshalFailed}
 		}
 		var effectedRules [][]string
@@ -219,9 +237,12 @@ func (s *Store) Apply(l *raft.Log) (e interface{}) {
 			enforcer := e.(*casbin.DistributedEnforcer)
 			effectedRules, err = enforcer.RemovePoliciesSelf(persist, p.Sec, p.PType, command.ToStringArray(p.Rules))
 			if err != nil {
+				log.Printf("[FSM][RemovePolicies] enforcer remove failed: namespace=%s sec=%s ptype=%s err=%v", cmd.Namespace, p.Sec, p.PType, err)
 				return &FSMResponse{error: err}
 			}
+			log.Printf("[FSM][RemovePolicies] success: namespace=%s sec=%s ptype=%s affected_count=%d", cmd.Namespace, p.Sec, p.PType, len(effectedRules))
 		} else {
+			log.Printf("[FSM][RemovePolicies] namespace not exist: %s", cmd.Namespace)
 			return &FSMResponse{error: NamespaceNotExist}
 		}
 		return &FSMResponse{effectedRules: effectedRules}
@@ -242,13 +263,17 @@ func (s *Store) Apply(l *raft.Log) (e interface{}) {
 		}
 		return &FSMResponse{effectedRules: effectedRules}
 	case command.Type_COMMAND_TYPE_CLEAR_POLICY:
+		log.Printf("[FSM][ClearPolicy] namespace=%s", cmd.Namespace)
 		if e, ok := s.enforcers.Load(cmd.Namespace); ok {
 			enforcer := e.(*casbin.DistributedEnforcer)
 			err := enforcer.ClearPolicySelf(persist)
 			if err != nil {
+				log.Printf("[FSM][ClearPolicy] enforcer clear failed: namespace=%s err=%v", cmd.Namespace, err)
 				return &FSMResponse{error: err}
 			}
+			log.Printf("[FSM][ClearPolicy] success: namespace=%s", cmd.Namespace)
 		} else {
+			log.Printf("[FSM][ClearPolicy] namespace not exist: %s", cmd.Namespace)
 			return &FSMResponse{error: NamespaceNotExist}
 		}
 		return &FSMResponse{}

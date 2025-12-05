@@ -390,6 +390,22 @@ func (s *Store) State() ClusterState {
 	}
 }
 
+// String returns the string representation of ClusterState
+func (c ClusterState) String() string {
+	switch c {
+	case Leader:
+		return "leader"
+	case Follower:
+		return "follower"
+	case Candidate:
+		return "candidate"
+	case Shutdown:
+		return "shutdown"
+	default:
+		return "unknown"
+	}
+}
+
 // Path returns the path to the store's storage directory.
 func (s *Store) Path() string {
 	return s.raftDir
@@ -546,6 +562,7 @@ func (s *Store) Stats() (map[string]interface{}, error) {
 func (s *Store) Join(id, addr string, voter bool, metadata map[string]string) error {
 	s.logger.Printf("received request to join node at %s", addr)
 	if s.raft.State() != raft.Leader {
+		s.logger.Printf("join rejected: not leader, current state=%v", s.raft.State())
 		return ErrNotLeader
 	}
 
@@ -582,12 +599,15 @@ func (s *Store) Join(id, addr string, voter bool, metadata map[string]string) er
 	}
 	if e := f.(raft.Future); e.Error() != nil {
 		if e.Error() == raft.ErrNotLeader {
+			s.logger.Printf("join failed: not leader")
 			return ErrNotLeader
 		}
+		s.logger.Printf("join raft operation failed: %v", e.Error())
 		return e.Error()
 	}
 
 	if err := s.setMetadata(id, metadata); err != nil {
+		s.logger.Printf("failed to set metadata for node %s: %v", id, err)
 		return err
 	}
 
@@ -610,14 +630,17 @@ func (s *Store) Remove(id string) error {
 // remove removes the node, with the given ID, from the cluster.
 func (s *Store) remove(id string) error {
 	if s.raft.State() != raft.Leader {
+		s.logger.Printf("remove rejected: not leader, current state=%v", s.raft.State())
 		return ErrNotLeader
 	}
 
 	f := s.raft.RemoveServer(raft.ServerID(id), 0, 0)
 	if f.Error() != nil {
 		if f.Error() == raft.ErrNotLeader {
+			s.logger.Printf("remove failed: not leader")
 			return ErrNotLeader
 		}
+		s.logger.Printf("remove raft operation failed: %v", f.Error())
 		return f.Error()
 	}
 
@@ -626,6 +649,7 @@ func (s *Store) remove(id string) error {
 	}
 	p, err := proto.Marshal(&md)
 	if err != nil {
+		s.logger.Printf("failed to marshal metadata delete: %v", err)
 		return err
 	}
 
@@ -635,15 +659,18 @@ func (s *Store) remove(id string) error {
 	}
 	bc, err := proto.Marshal(c)
 	if err != nil {
+		s.logger.Printf("failed to marshal command: %v", err)
 		return err
 	}
 
 	f = s.raft.Apply(bc, s.ApplyTimeout)
 	if e := f.(raft.Future); e.Error() != nil {
 		if e.Error() == raft.ErrNotLeader {
+			s.logger.Printf("remove metadata failed: not leader")
 			return ErrNotLeader
 		}
-		e.Error()
+		s.logger.Printf("remove metadata apply failed: %v", e.Error())
+		return e.Error()
 	}
 
 	return nil
