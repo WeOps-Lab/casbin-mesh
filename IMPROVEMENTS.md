@@ -96,16 +96,16 @@
 **功能特性**:
 ```bash
 # 检查单节点健康
-./build/health-check -node 127.0.0.1:8080
+./build/health-check -node 127.0.0.1:4002
 
 # 检查集群健康
-./build/health-check -node 127.0.0.1:8080 -cluster
+./build/health-check -node 127.0.0.1:4002 -cluster
 
 # 持续监控
-./build/health-check -node 127.0.0.1:8080 -cluster -watch -interval 10s
+./build/health-check -node 127.0.0.1:4002 -cluster -watch -interval 10s
 
 # JSON格式输出
-./build/health-check -node 127.0.0.1:8080 -cluster -format json
+./build/health-check -node 127.0.0.1:4002 -cluster -format json
 ```
 
 **输出示例**:
@@ -115,16 +115,16 @@
   Total Nodes: 3
   Healthy Nodes: 3
   Leader ID: node1
-  Leader Address: 127.0.0.1:8080
+  Leader Address: 127.0.0.1:4002
 
 Node Details:
   1. ✓ Node: node1
-     Address: 127.0.0.1:8080
+     Address: 127.0.0.1:4002
      Status: healthy
      Is Leader: true
 
   2. ✓ Node: node2
-     Address: 127.0.0.1:8081
+     Address: 127.0.0.1:4003
      Status: healthy
      Is Leader: false
 ```
@@ -134,14 +134,14 @@ Node Details:
 **功能特性**:
 ```bash
 # 基本监控
-./scripts/monitor-cluster.sh -n "127.0.0.1:8080,127.0.0.1:8081" -i 30
+./scripts/monitor-cluster.sh -n "127.0.0.1:4002,127.0.0.1:4003" -i 30
 
 # 详细监控
 ./scripts/monitor-cluster.sh -v -t 3 -l /var/log/casbin-mesh-monitor.log
 
 # 配置告警
 SLACK_WEBHOOK_URL="https://hooks.slack.com/..." \
-./scripts/monitor-cluster.sh -n "node1:8080,node2:8080" -i 10
+./scripts/monitor-cluster.sh -n "node1:4002,node2:4003" -i 10
 ```
 
 **特性**:
@@ -183,13 +183,13 @@ SLACK_WEBHOOK_URL="https://hooks.slack.com/..." \
 **功能特性**:
 ```bash
 # 基本性能测试
-./scripts/performance-test.sh -e 127.0.0.1:8080
+./scripts/performance-test.sh -e 127.0.0.1:4002
 
 # 高并发测试
-./scripts/performance-test.sh -e 127.0.0.1:8080 -c 50 -r 200
+./scripts/performance-test.sh -e 127.0.0.1:4002 -c 50 -r 200
 
 # 长时间测试并保存结果
-./scripts/performance-test.sh -e 127.0.0.1:8080 -d 300 -o results.json
+./scripts/performance-test.sh -e 127.0.0.1:4002 -d 300 -o results.json
 ```
 
 **测试项目**:
@@ -239,29 +239,29 @@ make build
 
 ```bash
 # 启动第一个节点
-./build/casmesh -raft-address 127.0.0.1:4002 -http-address 127.0.0.1:8080 -node-id node1 ./data1
+./build/casmesh -raft-address 127.0.0.1:4002 -node-id node1 ./data1
 
 # 启动第二个节点并加入集群
-./build/casmesh -raft-address 127.0.0.1:4003 -http-address 127.0.0.1:8081 -node-id node2 -join http://127.0.0.1:8080 ./data2
+./build/casmesh -raft-address 127.0.0.1:4003 -node-id node2 -join 127.0.0.1:4002 ./data2
 
 # 启动第三个节点并加入集群  
-./build/casmesh -raft-address 127.0.0.1:4004 -http-address 127.0.0.1:8082 -node-id node3 -join http://127.0.0.1:8080 ./data3
+./build/casmesh -raft-address 127.0.0.1:4004 -node-id node3 -join 127.0.0.1:4002 ./data3
 ```
 
 ### 监控集群
 
 ```bash
 # 检查集群健康
-./build/health-check -node 127.0.0.1:8080 -cluster
+./build/health-check -node 127.0.0.1:4002 -cluster
 
 # 启动监控
-./scripts/monitor-cluster.sh -n "127.0.0.1:8080,127.0.0.1:8081,127.0.0.1:8082" -v
+./scripts/monitor-cluster.sh -n "127.0.0.1:4002,127.0.0.1:4003,127.0.0.1:4004" -v
 
 # 查看详细指标
-curl http://127.0.0.1:8080/metrics | jq .
+curl http://127.0.0.1:4002/metrics | jq .
 
 # 性能测试
-./scripts/performance-test.sh -e 127.0.0.1:8080 -c 10 -r 100
+./scripts/performance-test.sh -e 127.0.0.1:4002 -c 10 -r 100
 
 # 数据管理
 ./scripts/data-management.sh stats -d ./data1
@@ -285,12 +285,12 @@ curl http://127.0.0.1:8080/metrics | jq .
 
 2. **检查集群健康**:
    ```bash
-   ./build/health-check -node 127.0.0.1:8080 -cluster -verbose
+   ./build/health-check -node 127.0.0.1:4002 -cluster -verbose
    ```
 
 3. **检查指标**:
    ```bash
-   curl http://127.0.0.1:8080/metrics
+   curl http://127.0.0.1:4002/metrics
    ```
 
 ### 性能问题
@@ -301,7 +301,7 @@ curl http://127.0.0.1:8080/metrics | jq .
 
 2. **监控内存使用**:
    ```bash
-   curl http://127.0.0.1:8080/metrics | jq .memory_usage
+   curl http://127.0.0.1:4002/metrics | jq .memory_usage
    ```
 
 3. **检查Badger GC**:

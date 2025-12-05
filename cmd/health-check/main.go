@@ -61,7 +61,7 @@ type HealthResponse struct {
 }
 
 var (
-	nodeAddr     = flag.String("node", "127.0.0.1:8080", "Node address to check (host:port)")
+	nodeAddr     = flag.String("node", "127.0.0.1:4002", "Node address to check (host:port)")
 	checkCluster = flag.Bool("cluster", false, "Check cluster health instead of single node")
 	outputFormat = flag.String("format", "text", "Output format: text, json")
 	timeout      = flag.Duration("timeout", 10*time.Second, "Request timeout")
@@ -81,16 +81,16 @@ Options:
 	fmt.Fprintf(os.Stderr, `
 Examples:
   # Check single node health
-  %s -node 192.168.1.100:8080
+  %s -node 192.168.1.100:4002
 
   # Check cluster health  
-  %s -node 192.168.1.100:8080 -cluster
+  %s -node 192.168.1.100:4002 -cluster
 
   # Continuous monitoring
-  %s -node 192.168.1.100:8080 -cluster -watch -interval 10s
+  %s -node 192.168.1.100:4002 -cluster -watch -interval 10s
 
   # JSON output
-  %s -node 192.168.1.100:8080 -cluster -format json
+  %s -node 192.168.1.100:4002 -cluster -format json
 
 `, os.Args[0], os.Args[0], os.Args[0], os.Args[0])
 }
