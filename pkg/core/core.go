@@ -1,19 +1,16 @@
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
+// Copyright 2023 The Casbin Mesh Authors.
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package core
 
@@ -92,6 +89,26 @@ func (s core) LeaderAddr() string {
 	return s.store.LeaderAddr()
 }
 
+// LeaderID returns the node ID of the Raft leader
+func (s core) LeaderID() (string, error) {
+	return s.store.LeaderID()
+}
+
+// ID returns the Raft ID of the store
+func (s core) ID() string {
+	return s.store.ID()
+}
+
+// State returns the current node's Raft state
+func (s core) State() store.ClusterState {
+	return s.store.State()
+}
+
+// Nodes returns the slice of nodes in the cluster
+func (s core) Nodes() ([]*store.Server, error) {
+	return s.store.Nodes()
+}
+
 // LeaderAPIAddr returns the API address of the leader, as known by this node.
 func (s core) LeaderAPIAddr() string {
 	return s.store.LeaderAddr()
@@ -127,6 +144,10 @@ type Core interface {
 	PrintModel(ctx context.Context, namespace string) (string, error)
 	IsLeader(ctx context.Context) bool
 	LeaderAddr() string
+	LeaderID() (string, error)
+	ID() string
+	State() store.ClusterState
+	Nodes() ([]*store.Server, error)
 	Stats(ctx context.Context) (map[string]interface{}, error)
 	CreateNamespace(ctx context.Context, ns string) error
 	SetModelFromString(ctx context.Context, ns string, text string) error
