@@ -55,6 +55,8 @@ func NewHttpService(core Core) *httpService {
 	srv := httpService{httpS, core, validate}
 	// set response header
 	httpS.Use(setResponseHeader)
+	// add panic recovery and connection protection
+	httpS.Use(panicRecovery)
 	// add access logging
 	httpS.Use(accessLogger)
 	// add request size limit (10MB default)
@@ -100,6 +102,36 @@ type JoinRequest struct {
 func setResponseHeader(ctx *http.Context) error {
 	ctx.ResponseWriter.Header().Set("Content-Type", "application/json; charset=utf-8")
 	return nil
+}
+
+// panicRecovery middleware to handle panics and prevent connection reset
+func panicRecovery(ctx *http.Context) error {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[PANIC] Recovered from panic: %v", r)
+
+			// Ensure response is properly closed
+			if ctx.ResponseWriter.Header().Get("Content-Type") == "" {
+				ctx.ResponseWriter.Header().Set("Content-Type", "application/json; charset=utf-8")
+			}
+
+			// Try to send error response if headers not already sent
+			ctx.ResponseWriter.WriteHeader(http2.StatusInternalServerError)
+			response := map[string]interface{}{
+				"error":     "Internal server error",
+				"timestamp": time.Now().Format(time.RFC3339),
+			}
+
+			if jsonBytes, err := json.Marshal(response); err == nil {
+				ctx.ResponseWriter.Write(jsonBytes)
+			}
+
+			// Log additional details for debugging
+			log.Printf("[PANIC] Request: %s %s from %s", ctx.Request.Method, ctx.Request.URL.Path, ctx.Request.RemoteAddr)
+		}
+	}()
+
+	return ctx.Next()
 }
 
 // requestSizeLimit middleware to prevent large requests from overwhelming the server
@@ -226,6 +258,9 @@ func (s *httpService) autoForwardToLeader(fn http.HandlerFunc) http.HandlerFunc 
 			c.ResponseWriter.Header().Del("Vary")
 			c.ResponseWriter.Header().Del("Access-Control-Allow-Origin")
 
+			// Ensure request body is properly closed
+			defer c.Request.Body.Close()
+
 			body, err := ioutil.ReadAll(c.Request.Body)
 			if err != nil {
 				log.Printf("[HTTP][Proxy] read body failed: method=%s uri=%s err=%v", c.Request.Method, c.Request.RequestURI, err)
@@ -241,13 +276,24 @@ func (s *httpService) autoForwardToLeader(fn http.HandlerFunc) http.HandlerFunc 
 				proxyReq.Header[h] = val
 			}
 
-			// forward the incoming request to leader
-			resp, err := http2.DefaultClient.Do(proxyReq)
+			// forward the incoming request to leader with timeout
+			client := &http2.Client{
+				Timeout: 15 * time.Second, // Reduced timeout to prevent client-side connection reset
+				Transport: &http2.Transport{
+					DisableKeepAlives:   false,
+					MaxIdleConns:        10,
+					MaxIdleConnsPerHost: 2,
+					IdleConnTimeout:     30 * time.Second,
+				},
+			}
+
+			resp, err := client.Do(proxyReq)
 			if err != nil {
 				log.Printf("[HTTP][Proxy] forward to leader failed: url=%s err=%v", url, err)
 				http2.Error(c.ResponseWriter, err.Error(), http2.StatusBadGateway)
 				return err
 			}
+			defer resp.Body.Close() // Close response body immediately after getting response
 
 			// Copy status code from upstream
 			c.ResponseWriter.WriteHeader(resp.StatusCode)
@@ -259,7 +305,6 @@ func (s *httpService) autoForwardToLeader(fn http.HandlerFunc) http.HandlerFunc 
 				log.Printf("[HTTP][Proxy] copy response failed: url=%s err=%v", url, err)
 				return err
 			}
-			defer resp.Body.Close()
 		}
 		return nil
 	}
@@ -362,25 +407,41 @@ type Response struct {
 }
 
 func (s *httpService) handleAddPolicies(ctx *http.Context) (err error) {
+	start := time.Now()
 	var request AddPoliciesRequest
+	
+	// 性能优化：限制request body读取大小，避免大量中文编码参数的解析开销
+	ctx.Request.Body = http2.MaxBytesReader(nil, ctx.Request.Body, 5*1024*1024) // 5MB限制
+	
 	if err = s.decode(ctx.Request.Body, &request); err != nil {
-		log.Printf("[HTTP][AddPolicies] decode failed: err=%v", err)
+		log.Printf("[HTTP][AddPolicies] decode failed in %v: err=%v", time.Since(start), err)
 		return
 	}
 
+	decodeTime := time.Since(start)
+	log.Printf("[HTTP][AddPolicies] decode completed in %v: ns=%s rules_count=%d", decodeTime, request.NS, len(request.Rules))
+
 	// Check batch size limit to prevent overwhelming the system
-	const maxBatchSize = 1000
+	const maxBatchSize = 2000  // 增加限制，支持更大批次
 	if len(request.Rules) > maxBatchSize {
 		err := fmt.Errorf("batch size too large: %d rules exceeds maximum of %d", len(request.Rules), maxBatchSize)
 		log.Printf("[HTTP][AddPolicies] batch size check failed: ns=%s rules_count=%d", request.NS, len(request.Rules))
 		return err
 	}
 
+	processStart := time.Now()
 	var rules [][]string
 	if rules, err = s.AddPolicies(context.TODO(), request.NS, request.Sec, request.PType, request.Rules); err != nil {
-		log.Printf("[HTTP][AddPolicies] add failed: ns=%s sec=%s ptype=%s rules_count=%d err=%v", request.NS, request.Sec, request.PType, len(request.Rules), err)
+		log.Printf("[HTTP][AddPolicies] add failed after %v: ns=%s sec=%s ptype=%s rules_count=%d err=%v", 
+			time.Since(start), request.NS, request.Sec, request.PType, len(request.Rules), err)
 		return err
 	}
+	
+	processTime := time.Since(processStart)
+	totalTime := time.Since(start)
+	log.Printf("[HTTP][AddPolicies] completed: total=%v decode=%v process=%v rules=%d rate=%.2f rules/sec", 
+		totalTime, decodeTime, processTime, len(request.Rules), float64(len(request.Rules))/totalTime.Seconds())
+		
 	return ctx.StatusCode(http2.StatusOK).JSON(Response{EffectedRules: rules})
 }
 
