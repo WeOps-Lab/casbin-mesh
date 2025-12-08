@@ -59,8 +59,8 @@ func NewHttpService(core Core) *httpService {
 	httpS.Use(panicRecovery)
 	// add access logging
 	httpS.Use(accessLogger)
-	// add request size limit (10MB default)
-	httpS.Use(requestSizeLimit(10 * 1024 * 1024))
+	// add request size limit (100MB default) - 支持10万条策略的超大批量请求
+	httpS.Use(requestSizeLimit(100 * 1024 * 1024))
 
 	// enable global middleware
 	switch core.AuthType() {
@@ -409,20 +409,52 @@ type Response struct {
 func (s *httpService) handleAddPolicies(ctx *http.Context) (err error) {
 	start := time.Now()
 	var request AddPoliciesRequest
-	
-	// 性能优化：限制request body读取大小，避免大量中文编码参数的解析开销
-	ctx.Request.Body = http2.MaxBytesReader(nil, ctx.Request.Body, 5*1024*1024) // 5MB限制
-	
-	if err = s.decode(ctx.Request.Body, &request); err != nil {
-		log.Printf("[HTTP][AddPolicies] decode failed in %v: err=%v", time.Since(start), err)
-		return
+
+	// 优先尝试JSON body解析，如果失败则尝试URL参数
+	jsonDecodeErr := s.decode(ctx.Request.Body, &request)
+
+	// 如果JSON解析失败，尝试从URL参数解析（向后兼容）
+	if jsonDecodeErr != nil {
+		log.Printf("[HTTP][AddPolicies] JSON decode failed, trying URL params: err=%v", jsonDecodeErr)
+
+		// 从URL参数解析
+		query := ctx.Request.URL.Query()
+		request.NS = query.Get("ns")
+		request.Sec = query.Get("sec")
+		request.PType = query.Get("ptype")
+
+		// 解析rules参数（可能有多个）
+		rulesParams := query["rules"]
+		if len(rulesParams) == 0 {
+			return fmt.Errorf("no rules provided in URL parameters")
+		}
+
+		// 将URL参数中的rules转换为二维数组
+		// 假设每个rule是逗号分隔的值
+		request.Rules = make([][]string, 0, len(rulesParams)/4) // 估计每个rule有4个元素
+
+		for i := 0; i < len(rulesParams); i += 4 {
+			if i+3 < len(rulesParams) {
+				rule := []string{rulesParams[i], rulesParams[i+1], rulesParams[i+2], rulesParams[i+3]}
+				request.Rules = append(request.Rules, rule)
+			}
+		}
+
+		log.Printf("[HTTP][AddPolicies] Using URL params fallback: ns=%s rules_count=%d", request.NS, len(request.Rules))
 	}
 
 	decodeTime := time.Since(start)
-	log.Printf("[HTTP][AddPolicies] decode completed in %v: ns=%s rules_count=%d", decodeTime, request.NS, len(request.Rules))
+	log.Printf("[HTTP][AddPolicies] decode completed in %v: ns=%s rules_count=%d method=%s",
+		decodeTime, request.NS, len(request.Rules),
+		func() string {
+			if jsonDecodeErr == nil {
+				return "JSON"
+			}
+			return "URL_PARAMS"
+		}())
 
 	// Check batch size limit to prevent overwhelming the system
-	const maxBatchSize = 2000  // 增加限制，支持更大批次
+	const maxBatchSize = 100000 // 支持10万条策略的大批次处理，避免任何限制问题
 	if len(request.Rules) > maxBatchSize {
 		err := fmt.Errorf("batch size too large: %d rules exceeds maximum of %d", len(request.Rules), maxBatchSize)
 		log.Printf("[HTTP][AddPolicies] batch size check failed: ns=%s rules_count=%d", request.NS, len(request.Rules))
@@ -432,16 +464,16 @@ func (s *httpService) handleAddPolicies(ctx *http.Context) (err error) {
 	processStart := time.Now()
 	var rules [][]string
 	if rules, err = s.AddPolicies(context.TODO(), request.NS, request.Sec, request.PType, request.Rules); err != nil {
-		log.Printf("[HTTP][AddPolicies] add failed after %v: ns=%s sec=%s ptype=%s rules_count=%d err=%v", 
+		log.Printf("[HTTP][AddPolicies] add failed after %v: ns=%s sec=%s ptype=%s rules_count=%d err=%v",
 			time.Since(start), request.NS, request.Sec, request.PType, len(request.Rules), err)
 		return err
 	}
-	
+
 	processTime := time.Since(processStart)
 	totalTime := time.Since(start)
-	log.Printf("[HTTP][AddPolicies] completed: total=%v decode=%v process=%v rules=%d rate=%.2f rules/sec", 
+	log.Printf("[HTTP][AddPolicies] completed: total=%v decode=%v process=%v rules=%d rate=%.2f rules/sec",
 		totalTime, decodeTime, processTime, len(request.Rules), float64(len(request.Rules))/totalTime.Seconds())
-		
+
 	return ctx.StatusCode(http2.StatusOK).JSON(Response{EffectedRules: rules})
 }
 
