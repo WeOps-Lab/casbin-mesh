@@ -16,6 +16,7 @@ package log
 
 import (
 	"fmt"
+
 	raftbadgerdb "github.com/BBVA/raft-badger"
 	"github.com/hashicorp/raft"
 )
@@ -27,11 +28,24 @@ type Log struct {
 
 // NewLog returns an instantiated Log object.
 func NewLog(path string) (*Log, error) {
-	bs, err := raftbadgerdb.NewBadgerStore(path)
+	return NewLogWithGCThreshold(path, 0)
+}
+
+// NewLogWithGCThreshold enables value log GC. A zero threshold uses the
+// raft-badger default of 1 GiB of growth between conditional GC runs.
+func NewLogWithGCThreshold(path string, gcThreshold int64) (*Log, error) {
+	return newLog(raftbadgerdb.Options{Path: path, GCThreshold: gcThreshold})
+}
+
+func newLog(options raftbadgerdb.Options) (*Log, error) {
+	// Raft snapshots only delete old keys. Badger must also reclaim their
+	// obsolete values, including on nodes with no further log growth.
+	options.ValueLogGC = true
+	bs, err := raftbadgerdb.New(options)
 	if err != nil {
-		return nil, fmt.Errorf("new bolt store: %s", err)
+		return nil, fmt.Errorf("new badger log store: %w", err)
 	}
-	return &Log{bs}, nil
+	return &Log{BadgerStore: bs}, nil
 }
 
 // Indexes returns the first and last indexes.

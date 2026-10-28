@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -32,6 +33,8 @@ type Listener struct {
 	advertise net.Addr
 
 	shutdownCh chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 // NewListener creates a Listener.
@@ -67,6 +70,11 @@ func (l *Listener) handle(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			select {
+			case <-l.shutdownCh:
+				return
+			default:
+			}
 			continue
 		}
 
@@ -100,22 +108,14 @@ func (l *Listener) Addr() net.Addr {
 
 // Close closes all listeners provided by NewListener, and stops accept the new connection.
 func (l *Listener) Close() error {
-	var result error
-
-	select {
-	case <-l.shutdownCh:
-		break
-	default:
+	l.closeOnce.Do(func() {
 		close(l.shutdownCh)
 		for _, listener := range l.listeners {
 			err := listener.Close()
 			if err != nil && !errors.Is(err, net.ErrClosed) {
-				result = multierror.Append(result, err)
+				l.closeErr = multierror.Append(l.closeErr, err)
 			}
 		}
-	}
-
-	l.listeners = nil
-
-	return result
+	})
+	return l.closeErr
 }

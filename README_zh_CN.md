@@ -71,3 +71,17 @@ state
 - Level [5]: https://github.com/rqlite/rqlite/blob/master/DOC/CONSISTENCY.md
 - SCRAM[6]:https://tools.ietf.org/html/rfc5802
 
+## Raft 日志空间维护
+
+`default-raft.db` 是 Badger 数据库目录。快照成功后，Raft 会截断旧日志；
+value log GC 随后回收 `.vlog` 中已失效的值。这两步共同控制历史日志占用。
+
+- `--raft-snap` 控制触发快照的日志条数，默认 8192；`--raft-snap-int` 控制检查周期，默认 30s。
+- Raft 库默认启用 value log GC，每分钟检查一次增长量，每 10 分钟执行一次不依赖增长量的 GC。
+- `--gc-threshold` 同时用于 Raft 和状态库的条件 GC，默认增长 1 GiB；它不是数据库大小上限。
+- GC 依赖 LSM 压缩产生的失效数据统计，不会删除仍需保留的有效日志，也不保证升级后立即释放全部历史占用。
+
+升级前需保留备份和足够的空闲空间，并在保持投票多数的前提下逐个更新节点。
+磁盘已经写满时，应先扩容或释放确认可清理的非数据库文件，为启动、快照、压缩和 GC 提供空间。
+通过 `/stats` 的 `last_snapshot_index`、复制进度以及实际目录占用验证回收效果。
+不要手工删除 `.vlog`、`.sst` 等数据库内部文件。

@@ -141,6 +141,7 @@ func New(cfg *Config) (close func() error) {
 	str.RaftLogLevel = cfg.raftLogLevel
 	str.ShutdownOnRemove = cfg.raftShutdownOnRemove
 	str.GcThreshold = int64(cfg.gcThreshold)
+	str.SnapshotThreshold = cfg.raftSnapThreshold
 	str.SnapshotInterval, err = time.ParseDuration(cfg.raftSnapInterval)
 	if err != nil {
 		log.Fatalf("failed to parse Raft Snapsnot interval %s: %s", cfg.raftSnapInterval, err.Error())
