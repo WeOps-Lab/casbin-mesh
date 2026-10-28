@@ -259,7 +259,7 @@ func (s *Store) Open(enableBootstrap bool) error {
 		}
 	}
 	// Create the log store and stable store.
-	s.boltStore, err = rlog.NewLog(filepath.Join(s.raftDir, raftDBPath))
+	s.boltStore, err = rlog.NewLogWithGCThreshold(filepath.Join(s.raftDir, raftDBPath), s.GcThreshold)
 	if err != nil {
 		return fmt.Errorf("new log store: %s", err)
 	}
